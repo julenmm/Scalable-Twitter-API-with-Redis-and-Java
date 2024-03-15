@@ -1,11 +1,11 @@
 package org.example;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.sql.*;
+import database.DBUtils;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * This class implements the DPDatabaseAPI interface to provide database operations using SQLite.
@@ -14,40 +14,13 @@ import java.util.List;
  */
 public class DPDatabaseSqLite implements DPDatabaseAPI{
 
-    private Connection connection;
+    private DBUtils dbu;
 
     /**
-     * Creates a temporary in-memory SQLite database and initializes it using SQL statements from a specified file.
-     *
-     * @param sqlFilePath Path to the SQL file containing the database schema and initialization statements.
+     * Constructor for DPDatabaseSqLite class. Initializes the database utilities.
      */
-    @Override
-    public void createTempDataBase(String sqlFilePath) {
-        try {
-            // Establish a connection to the SQLite database
-            connection = DriverManager.getConnection("jdbc:sqlite::memory:");
-            System.out.println("Connection to SQLite has been established.");
-
-            // Read SQL statements from the file and concatenate
-            List<String> lines = Files.readAllLines(Paths.get(sqlFilePath));
-            String sql = String.join(" ", lines);
-
-            // Execute SQL statements to initialize the database schema
-            String[] sqlStatements = sql.split(";"); // Split into individual statements
-            for (String statement : sqlStatements) {
-                if (!statement.trim().isEmpty()) {
-                    try (Statement stmt = connection.createStatement()) {
-                        stmt.execute(statement);
-                    }
-                }
-            }
-
-            System.out.println("In-memory database has been initialized from SQL file.");
-        } catch (SQLException e) {
-            System.out.println("Error connecting to SQLite: " + e.getMessage());
-        } catch (IOException e) {
-            System.out.println("Error reading SQL file: " + e.getMessage());
-        }
+    public DPDatabaseSqLite() {
+        this.dbu = new DBUtils();
     }
 
     /**
@@ -57,15 +30,31 @@ public class DPDatabaseSqLite implements DPDatabaseAPI{
      */
     @Override
     public void insertTweet(Tweet tweet) {
-        String sql = "INSERT INTO TWEET (user_id, tweet_text) VALUES (?, ?)";
+        Long tweetId = dbu.getConnection().sync().incr("tweet:next_id");
 
-        try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-            pstmt.setInt(1, tweet.getUserId());
-            pstmt.setString(2, tweet.getText());
-            pstmt.executeUpdate();
-            //System.out.println("Tweet inserted successfully.");
-        } catch (SQLException e) {
-            System.out.println("Error inserting tweet: " + e.getMessage());
+        String tweetKey = "tweet:" + tweetId;
+        Map<String, String> tweetMap = new HashMap<>();
+        tweetMap.put("user_id", String.valueOf(tweet.getUserId()));
+        tweetMap.put("tweet_ts", Instant.now().toString());
+        tweetMap.put("tweet_text", tweet.getText());
+
+        this.dbu.insertHset(tweetKey, tweetMap);
+
+        this.updateTimeLines(tweet, tweetId);
+    }
+
+    /**
+     * Updates timelines for followers after inserting a Tweet.
+     *
+     * @param tweet   The Tweet object that was inserted.
+     * @param tweetId The unique ID of the inserted tweet.
+     */
+    @Override
+    public void updateTimeLines(Tweet tweet, Long tweetId) {
+        List<String> userFollowers = this.dbu.getList("user_followed_by:" + tweet.getUserId());
+
+        for (String userKey : userFollowers) {
+            this.dbu.rPushLimit("timeline:" + userKey, String.valueOf(tweetId), 10);
         }
     }
 
@@ -76,16 +65,14 @@ public class DPDatabaseSqLite implements DPDatabaseAPI{
      */
     @Override
     public void insertFollows(Follows follows) {
-        String sql = "INSERT INTO FOLLOWS (user_id, follows_id) VALUES (?, ?)";
+        String userFollowsKey = "user_follows:" + follows.getUserId();
+        String followsId = String.valueOf(follows.getFollowsId());
 
-        try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-            pstmt.setInt(1, follows.getUserId());
-            pstmt.setInt(2, follows.getFollowsId());
-            pstmt.executeUpdate();
-            //System.out.println("Follows inserted successfully.");
-        } catch (SQLException e) {
-            System.out.println("Error inserting Follows: " + e.getMessage());
-        }
+        this.dbu.rPush(userFollowsKey, followsId);
+
+        String userFollowedBy = "user_followed_by:" + follows.getFollowsId();
+
+        this.dbu.rPush(userFollowedBy, userFollowsKey);
     }
 
     /**
@@ -96,18 +83,17 @@ public class DPDatabaseSqLite implements DPDatabaseAPI{
     @Override
     public List<Integer> getAllUserIds() {
         List<Integer> userIds = new ArrayList<>();
-        String sql = "SELECT DISTINCT user_id FROM FOLLOWS";
+        String matchPattern = "user_follows:*";
+        List<String> userKeys = dbu.getKeysByPattern(matchPattern);
 
-        try (Statement stmt = connection.createStatement();
-             ResultSet rs = stmt.executeQuery(sql)) {
-
-            while (rs.next()) {
-                userIds.add(rs.getInt("user_id"));
+        for (String key : userKeys) {
+            try {
+                String idStr = key.substring(key.indexOf(':') + 1);
+                userIds.add(Integer.parseInt(idStr));
+            } catch (NumberFormatException e) {
+                System.err.println("Error parsing user ID from key: " + key);
             }
-        } catch (SQLException e) {
-            System.out.println("Error retrieving user IDs: " + e.getMessage());
         }
-
         return userIds;
     }
 
@@ -120,28 +106,21 @@ public class DPDatabaseSqLite implements DPDatabaseAPI{
      */
     @Override
     public List<Tweet> retrieveTimeline(int userId) {
-        List<Tweet> timeline = new ArrayList<>();
-        // SQL query to find the 10 most recent tweets from followed users
-        String sql = "SELECT T.user_id, T.tweet_text "+
-                "FROM TWEET T " +
-                "INNER JOIN FOLLOWS F ON T.user_id = F.follows_id " +
-                "WHERE F.user_id = ? " +
-                "ORDER BY T.tweet_ts DESC " +
-                "LIMIT 10";
-
-        try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-            pstmt.setInt(1, userId);
-            try (ResultSet rs = pstmt.executeQuery()) {
-                while (rs.next()) {
-                    int tweetUserId = rs.getInt("user_id");
-                    String tweetText = rs.getString("tweet_text");
-                    Tweet tweet = new Tweet(tweetUserId, tweetText);
-                    timeline.add(tweet);
-                }
-            }
-        } catch (SQLException e) {
-            System.out.println("Error retrieving timeline for user " + userId + ": " + e.getMessage());
+        List<Tweet> timeLine = new ArrayList<>();
+        List<String> tweetKeys = this.dbu.getList("timeline:" + userId);
+        for(String key: tweetKeys){
+            Map<String, String> tweet = this.dbu.hGet(key);
+            timeLine.add(new Tweet(Integer.parseInt(tweet.get("user_id")), tweet.get("tweet_text")));
         }
-        return timeline;
+        return timeLine;
+    }
+
+    /**
+     * Closes the database connection.
+     * This method ensures that the connection to the SQLite database is properly closed.
+     */
+    @Override
+    public void closeConnection() {
+        this.dbu.closeConnection();
     }
 }

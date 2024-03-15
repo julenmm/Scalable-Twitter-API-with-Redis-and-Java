@@ -3,73 +3,101 @@ package org.example;
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
- * This class handles the processing of Twitter data.
- * It includes methods for reading and saving tweet data and follow relationships from CSV files.
+ * Processes Twitter data from CSV files and interacts with a database API.
+ * This class provides functionality to read tweets and follows from CSV files and save them to a database.
  */
 public class TwitterProcessor {
+    private final DPDatabaseAPI api;
 
     /**
-     * Reads tweets from a CSV file and saves them using the provided API.
+     * Constructor for TwitterProcessor.
      *
-     * @param csvPath The file path of the CSV file containing tweet data.
-     * @param api     The data processing API to use for saving tweets.
+     * @param api The database API used to interact with the database.
      */
-    public static void readAndSaveTweets(String csvPath, DPDatabaseAPI api) {
+    public TwitterProcessor(DPDatabaseAPI api) {
+        this.api = api;
+    }
+
+    /**
+     * Processes tweets from a CSV file and inserts them into the database.
+     * Reads tweet information from a specified CSV file path and stores each tweet in the database.
+     *
+     * @param csvPath Path to the CSV file containing tweet data.
+     */
+    public void processTweets(String csvPath) {
+        List<Tweet> tweets = new ArrayList<>();
+
         try (BufferedReader br = new BufferedReader(new FileReader(csvPath))) {
-            // Reading first line (header line) so that the loop doesn't read it
-            String line = br.readLine();
+            String line = br.readLine(); // Skip header line
 
             while ((line = br.readLine()) != null) {
                 String[] values = line.split(",");
                 int userId = Integer.parseInt(values[0].trim());
                 String tweetText = values[1];
-                Tweet currentTweet = new Tweet(userId, tweetText);
-                api.insertTweet(currentTweet);
+                tweets.add(new Tweet(userId, tweetText));
             }
-        } catch (IOException e) {
+        } catch (IOException | NumberFormatException e) {
+            System.err.println("Error reading tweets: " + e.getMessage());
             e.printStackTrace();
-        } catch (NumberFormatException e) {
-            System.out.println("Error parsing integer from CSV: " + e.getMessage());
+            return;
+        }
+
+        for (int i = 0; i < tweets.size(); i++) {
+            try {
+                api.insertTweet(tweets.get(i));
+                //System.out.println("tweet inserted number" + i);
+            } catch (Exception e) {
+                System.err.println("Error inserting tweet: " + e.getMessage());
+            }
         }
     }
 
     /**
-     * Reads follow relationships from a CSV file and saves them using the provided API.
+     * Processes follows relationships from a CSV file and inserts them into the database.
+     * Reads follow information (user follow relationships) from a specified CSV file path and stores each relationship in the database.
      *
-     * @param csvPath The file path of the CSV file containing follow data.
-     * @param api     The data processing API to use for saving follow relationships.
+     * @param csvPath Path to the CSV file containing follows data.
      */
-    public static void readAndSaveFollows(String csvPath, DPDatabaseAPI api){
+    public void processFollows(String csvPath) {
         try (BufferedReader br = new BufferedReader(new FileReader(csvPath))) {
-            // Reading first line (header line) so that the loop doesn't read it
-            String line = br.readLine();
+            String line = br.readLine(); // Skip header line
+
+            List<Follows> follows = new ArrayList<>();
 
             while ((line = br.readLine()) != null) {
                 String[] values = line.split(",");
                 int userId = Integer.parseInt(values[0].trim());
                 int followsId = Integer.parseInt(values[1].trim());
-                Follows currentFollows = new Follows(userId, followsId);
-                api.insertFollows(currentFollows);
+                follows.add(new Follows(userId, followsId));
             }
-        } catch (IOException e) {
+
+            for (int i = 0; i < follows.size(); i++) {
+                try {
+                    api.insertFollows(follows.get(i));
+                   // System.out.println("follows inserted number" + i);
+                } catch (Exception e) {
+                 //   System.err.println("Error inserting follows: " + e.getMessage());
+                }
+            }
+        } catch (IOException | NumberFormatException e) {
+            System.err.println("Error processing follows: " + e.getMessage());
             e.printStackTrace();
-        } catch (NumberFormatException e) {
-            System.out.println("Error parsing integer from CSV: " + e.getMessage());
         }
     }
 
     /**
-     * Retrieves and processes the home timelines for a list of user IDs.
-     *
-     * @param userIds The list of user IDs for which to retrieve home timelines.
-     * @param api The data processing API to use for retrieving timelines.
+     * Retrieves and processes timelines for all users.
+     * Retrieves a list of all user IDs from the database and processes timelines for each user.
      */
-    public static void retrieveAllHomeTimelines(List<Integer> userIds, DPDatabaseAPI api) {
-        for(Integer userId: userIds){
-            api.retrieveTimeline(userId);
+    public void retrieveAndProcessAllTimelines() {
+        List<Integer> userIds = this.api.getAllUserIds();
+        for(int i = 0; i < userIds.size(); i++) {
+            this.api.retrieveTimeline(userIds.get(i));
+          //  System.out.println("timelenine retreived: " + i);
         }
     }
 }

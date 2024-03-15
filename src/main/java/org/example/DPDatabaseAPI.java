@@ -9,12 +9,6 @@ import java.util.List;
  */
 public interface DPDatabaseAPI {
 
-    /**
-     * Creates a temporary in-memory database and initializes it using SQL statements from a specified file.
-     *
-     * @param sqlFilePath Path to the SQL file containing the database schema and initialization statements.
-     */
-    void createTempDataBase(String sqlFilePath);
 
     /**
      * Inserts a Tweet record into the database.
@@ -45,4 +39,18 @@ public interface DPDatabaseAPI {
      * @return A List of Tweet objects representing the user's timeline.
      */
     List<Tweet> retrieveTimeline(int userId);
+
+    /**
+     * Closes the database connection.
+     * This method ensures that the connection to the SQLite database is properly closed.
+     */
+    void closeConnection();
+
+    /**
+     * Updates timelines for followers after inserting a Tweet.
+     *
+     * @param tweet   The Tweet object that was inserted.
+     * @param tweetId The unique ID of the inserted tweet.
+     */
+    void updateTimeLines(Tweet tweet, Long tweetId);
 }

@@ -1,61 +1,61 @@
 package org.example;
 
-import java.util.List;
-
-import static org.example.TwitterProcessor.*;
-
 /**
  * The Main class for the Twitter-like application.
  * It handles the initialization of the database and processing of tweets and follows data.
  */
 public class Main {
 
-    private static DPDatabaseAPI api = new DPDatabaseSqLite();
-
     /**
-     * Main method to run the application.
+     * The main method to run the application.
      * It accepts file paths as command line arguments and processes the data.
+     * The application requires three command line arguments: the path to the SQL file
+     * for database initialization, and the paths to the tweets and follows CSV files.
      *
-     * @param args Command line arguments containing file paths for SQL, tweets, and follows data.
+     * @param args Command line arguments containing file paths for SQL file,
+     *             tweets CSV file, and follows CSV file.
      */
     public static void main(String[] args) {
         try {
-            if (args.length < 3) {
-                throw new IllegalArgumentException("Not enough arguments. Please provide paths for SQL file, "
-                        + "tweets CSV, and follows CSV.");
+            if (args.length < 2) {
+                throw new IllegalArgumentException("Not enough arguments. Please provide paths for tweets CSV, and follows CSV.");
             }
+            String tweetFilePath = args[0];
+            String followsFilePath = args[1];
 
-            String sqlFilePath = args[0];
-            String tweetFilePath = args[1];
-            String followsFilePath = args[2];
+            DPDatabaseAPI api = new DPDatabaseSqLite();
 
-            api.createTempDataBase(sqlFilePath);
+            TwitterProcessor processor = new TwitterProcessor(api);
 
-            long startTime = System.nanoTime();
-            readAndSaveTweets(tweetFilePath, api);
-            long endTime = System.nanoTime();
-            long duration = (endTime - startTime) / 1_000_000;
-            System.out.println("System took: " + duration + " milliseconds to save tweets");
-            // Calculate tweets per second
-            long tweetsPerSecond = (duration > 0) ? (1000000 / (duration / 1000)) : 0;
-            System.out.println("System called postTweet method an average of " + tweetsPerSecond + " times per second");
+            processor.processFollows(followsFilePath);
 
-            readAndSaveFollows(followsFilePath, api);
+            long startTime, endTime;
 
-            List<Integer> userIds = api.getAllUserIds();
             startTime = System.nanoTime();
-            retrieveAllHomeTimelines(userIds, api);
+            processor.processTweets(tweetFilePath);
             endTime = System.nanoTime();
-            duration = (endTime - startTime) / 1_000_000;
-            long averageTimePerTimeline = (userIds.size() > 0) ? (duration / userIds.size()) : 0;
-            System.out.println("The average time in milliseconds to retrieve timelines is: " + averageTimePerTimeline);
+            printDuration("Saving tweets", startTime, endTime);
 
-            // Calculate home timelines per second
-            long timelinesPerSecond = (duration > 0) ? (userIds.size() / (duration / 1000)) : 0;
-            System.out.println("System called getHomeTimeline Method an average of " + timelinesPerSecond
-                    + " times per second");
+            startTime = System.nanoTime();
+            processor.retrieveAndProcessAllTimelines();
+            endTime = System.nanoTime();
+            printDuration("Retrieving timelines", startTime, endTime);
+            api.closeConnection();
         } catch (Exception e) {
             System.err.println("Error: " + e.getMessage());
+            e.printStackTrace();
         }
+    }
+
+    /**
+     * Prints the duration of a task in milliseconds.
+     *
+     * @param task The name of the task.
+     * @param startTime The start time of the task in nanoseconds.
+     * @param endTime The end time of the task in nanoseconds.
+     */
+    private static void printDuration(String task, long startTime, long endTime) {
+        long duration = (endTime - startTime) / 1_000_000;
+        System.out.println(task + " took " + duration + " milliseconds.");
     }
 }
